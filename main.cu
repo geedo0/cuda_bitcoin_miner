@@ -3,31 +3,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "utils.cuh"
+
 #include "test.h"
-
-inline void gpuAssert(cudaError_t code, char *file, int line, bool abort=true);
-#define CUDA_SAFE_CALL(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-
-typedef struct {
-	bool nonce_found;
-	uint32_t nonce;
-} Nonce_result;
-
-void initialize_nonce_result(Nonce_result *nr) {
-	nr->nonce_found = true;
-	nr->nonce = 0xdeadbeef;
-}
 
 int main(int argc, char **argv) {
 	int i;
 	unsigned char *data = test_block;
 	size_t datasz = 76;
-
-	for(i=0; i<test_block_length; i++) {
-		if(!(i%10))
-			printf("\n");
-		printf("0x%.2hhx, ", data[i]);
-	}
 
 	//Initialize Nonce Result to see if we solved the block
 	Nonce_result nr;
@@ -61,13 +44,4 @@ int main(int argc, char **argv) {
 		printf("Copy failed %d %d", nr_from_device.nonce, nr.nonce);
 
 	return 0;
-}
-
-inline void gpuAssert(cudaError_t code, char *file, int line, bool abort)
-{
-	if (code != cudaSuccess) 
-	{
-		fprintf(stderr,"CUDA_SAFE_CALL: %s %s %d\n", cudaGetErrorString(code), file, line);
-		if (abort) exit(code);
-	}
 }
