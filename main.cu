@@ -6,6 +6,9 @@
 #include "cuPrintf.cu"
 #include "cuPrintf.cuh"
 #include "utils.cuh"
+extern "C" {
+#include "sha256.h"
+}
 
 #include "test.h"
 
@@ -16,6 +19,13 @@ int main(int argc, char **argv) {
 	unsigned char *data = test_block;
 	size_t datasz = 76;
 
+	//Compute the first SHA-256 message block
+	//Registers a-h stored in ctx.state
+	//Remainder data is padded and stored in ctx.data, just change the nonce
+	SHA256_CTX ctx;
+	sha256_init(&ctx);
+	sha256_update(&ctx, (unsigned char *) data, 80);
+	sha256_pad(&ctx);
 
 	cudaPrintfInit();
 
