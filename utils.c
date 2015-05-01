@@ -1,5 +1,27 @@
 #include "utils.h"
 
+struct timespec diff(struct timespec start, struct timespec end);
+
+struct timespec time1, time2;
+
+struct timespec diff(struct timespec start, struct timespec end)
+{
+  struct timespec temp;
+  if ((end.tv_nsec-start.tv_nsec)<0) {
+    temp.tv_sec = end.tv_sec-start.tv_sec-1;
+    temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+  } else {
+    temp.tv_sec = end.tv_sec-start.tv_sec;
+    temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+  }
+  return temp;
+}
+
+long int get_execution_time() {
+	struct timespec delta = diff(time1,time2);
+	return (long int) (GIG * delta.tv_sec + delta.tv_nsec);
+}
+
 void initialize_nonce_result(Nonce_result *nr) {
 	nr->nonce_found = false;
 	nr->nonce = 0;
