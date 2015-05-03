@@ -12,14 +12,26 @@ extern "C" {
 
 #include "test.h"
 
+//#define VERIFY_HASH		//Execute only 1 thread and verify manually
+//#define ITERATE_BLOCKS	//Don't define BDIMX and create a 65535x1 Grid
+
 /*
 	Threads = BDIMX*GDIMX*GDIMY
 	Thread Max = 2^32
-	512, 2^15, 2^8 fits everything
+	The most convenient way to form dimensions is to use a square grid of blocks
+	GDIMX = sqrt(2^32/BDIMX)
 */
+#ifndef VERIFY_HASH
 #define BDIMX		512			//MAX = 512
-#define GDIMX		65535		//MAX = 65535 = 2^16-1
+#define GDIMX		65535//8192		//MAX = 65535 = 2^16-1
 #define GDIMY		1
+#endif
+
+#ifdef VERIFY_HASH
+#define BDIMX	1
+#define GDIMX	1
+#define GDIMY	1
+#endif
 
 __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug);
 
@@ -85,9 +97,18 @@ int main(int argc, char **argv) {
 	//Data buffer for sending debug information to/from the GPU
 	unsigned char debug[32];
 	unsigned char *d_debug;
+	#ifdef VERIFY_HASH
+	SHA256_CTX verify;
+	sha256_init(&verify);
+	sha256_update(&verify, (unsigned char *) data, 80);
+	sha256_final(&verify, debug);
+	sha256_init(&verify);
+	sha256_update(&verify, (unsigned char *) debug, 32);
+	sha256_final(&verify, debug);
+	#endif
 	CUDA_SAFE_CALL(cudaMalloc((void **)&d_debug, 32*sizeof(unsigned char)));
 	CUDA_SAFE_CALL(cudaMemcpy(d_debug, (void *) &debug, 32*sizeof(unsigned char), cudaMemcpyHostToDevice));
-	
+
 	//Allocate space on Global Memory
 	SHA256_CTX *d_ctx;
 	Nonce_result *d_nr;
@@ -102,23 +123,36 @@ int main(int argc, char **argv) {
 	CUDA_SAFE_CALL(cudaMemcpy(d_ctx, (void *) &ctx, sizeof(SHA256_CTX), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(d_nr, (void *) &h_nr, sizeof(Nonce_result), cudaMemcpyHostToDevice));
 
-	//Start timers
-	cudaEvent_t start, stop;
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventRecord(start, 0);
+	#ifdef ITERATE_BLOCKS
+	//Try different block sizes
+	double num_hashes;
+	for(i=1; i <= 512; i++) {
+		dim3 DimBlock(i,1);
+	#endif
+		//Start timers
+		cudaEvent_t start, stop;
+		float elapsed_gpu;
+		cudaEventCreate(&start);
+		cudaEventCreate(&stop);
+		cudaEventRecord(start, 0);
 
-	//Launch Kernel
-	kernel_sha256d<<<DimGrid, DimBlock>>>(d_ctx, d_nr, (void *) d_debug);
+		//Launch Kernel
+		kernel_sha256d<<<DimGrid, DimBlock>>>(d_ctx, d_nr, (void *) d_debug);
 
-	//Stop timers
-	float elapsed_gpu;
-	cudaEventRecord(stop,0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsed_gpu, start, stop);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
+		//Stop timers
+		cudaEventRecord(stop,0);
+		cudaEventSynchronize(stop);
+		cudaEventElapsedTime(&elapsed_gpu, start, stop);
+		cudaEventDestroy(start);
+		cudaEventDestroy(stop);
 
+	#ifdef ITERATE_BLOCKS
+		//Calculate results
+		num_hashes = GDIMX*i;
+		//block size, hashrate, hashes, execution time
+		printf("%d, %.2f, %.0f, %.2f\n", i, num_hashes/(elapsed_gpu*1e-3), num_hashes, elapsed_gpu);
+	}
+	#endif
 	//Copy nonce result back to host
 	CUDA_SAFE_CALL(cudaMemcpy((void *) &h_nr, d_nr, sizeof(Nonce_result), cudaMemcpyDeviceToHost));
 
@@ -164,11 +198,6 @@ __constant__ uint32_t k[64] = {
 	0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
 	0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
 	0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-};
-
-__constant__ uint32_t h[8] = {
-	0x6a09e667,	0xbb67ae85,	0x3c6ef372,	0xa54ff53a,
-	0x510e527f,	0x9b05688c,	0x1f83d9ab,	0x5be0cd19
 };
 
 //Threads are organized mostly linearly but maximum GridDim forces some rows to exist
@@ -261,7 +290,12 @@ __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
 	hh[6] = ENDIAN_SWAP_32(g + 0x1f83d9ab);
 	hh[7] = ENDIAN_SWAP_32(h + 0x5be0cd19);
 
-	//cuPrintf("%.8x\n",hh[0]);
+	#ifdef VERIFY_HASH
+	for(i=0; i<8; i++) {
+		cuPrintf("%.8x, %.8x\n", hh[i], mm[i]);
+	}
+	#endif
+
 	unsigned char *hhh = (unsigned char *) hh;
 	i=0;
 	while(hhh[i] == ctx->difficulty[i])
