@@ -9,6 +9,7 @@ extern "C" {
 	#include "sha256.h"
 	#include "utils.h"
 }
+#include "sha256_unrolls.h"
 
 #include "test.h"
 
@@ -240,18 +241,8 @@ __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
 	g = ctx->state[6];
 	h = ctx->state[7];
 
-	for (i = 0; i < 64; ++i) {
-		t1 = h + EP1(e) + CH(e,f,g) + k[i] + m[i];
-		t2 = EP0(a) + MAJ(a,b,c);
-		h = g;
-		g = f;
-		f = e;
-		e = d + t1;
-		d = c;
-		c = b;
-		b = a;
-		a = t1 + t2;
-	}
+	//This is a large multiline macro for the SHA256 compression rounds
+	SHA256_COMPRESS_8X
 
 	//Prepare input for next SHA-256
 	m[0] = a + ctx->state[0];
@@ -279,18 +270,8 @@ __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
 	f = 0x9b05688c;
 	g = 0x1f83d9ab;
 	h = 0x5be0cd19;
-	for (i = 0; i < 64; ++i) {
-		t1 = h + EP1(e) + CH(e,f,g) + k[i] + m[i];
-		t2 = EP0(a) + MAJ(a,b,c);
-		h = g;
-		g = f;
-		f = e;
-		e = d + t1;
-		d = c;
-		c = b;
-		b = a;
-		a = t1 + t2;
-	}
+
+	SHA256_COMPRESS_1X
 
 	hash[0] = ENDIAN_SWAP_32(a + 0x6a09e667);
 	hash[1] = ENDIAN_SWAP_32(b + 0xbb67ae85);
