@@ -63,7 +63,10 @@ int main(int argc, char **argv) {
 		The goal here is to prepare and compute everything that will be shared by all threads.
 	*/
 	
+	//Initialize Cuda stuff
 	cudaPrintfInit();
+	dim3 DimBlock(BDIMX,1);
+	dim3 DimGrid(GDIMX,GDIMY);
 
 	//Used to store a nonce if a block is mined
 	Nonce_result h_nr;
@@ -99,15 +102,27 @@ int main(int argc, char **argv) {
 	CUDA_SAFE_CALL(cudaMemcpy(d_ctx, (void *) &ctx, sizeof(SHA256_CTX), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(d_nr, (void *) &h_nr, sizeof(Nonce_result), cudaMemcpyHostToDevice));
 
-	//Launch kernel
-	dim3 DimBlock(BDIMX,1);
-	dim3 DimGrid(GDIMX,GDIMY);
+	//Start timers
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+
+	//Launch Kernel
 	kernel_sha256d<<<DimGrid, DimBlock>>>(d_ctx, d_nr, (void *) d_debug);
+
+	//Stop timers
+	float elapsed_gpu;
+	cudaEventRecord(stop,0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsed_gpu, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
 
 	//Copy nonce result back to host
 	CUDA_SAFE_CALL(cudaMemcpy((void *) &h_nr, d_nr, sizeof(Nonce_result), cudaMemcpyDeviceToHost));
 
-	/*
+	/*	
 		Post Processing
 		Check the results of mining and print out debug information
 	*/
@@ -122,6 +137,7 @@ int main(int argc, char **argv) {
 	CUDA_SAFE_CALL(cudaFree(d_nr));
 	CUDA_SAFE_CALL(cudaFree(d_debug));
 
+	//Output the results
 	if(h_nr.nonce_found) {
 		printf("Nonce found! %.8x\n", h_nr.nonce);
 		compute_and_print_hash(data, h_nr.nonce);
@@ -129,6 +145,11 @@ int main(int argc, char **argv) {
 	else {
 		printf("Nonce not found :(\n");
 	}
+	
+	double num_hashes = BDIMX*GDIMX*GDIMY;
+	printf("Tested %.0f hashes\n", num_hashes);
+	printf("GPU execustion time: %f ms\n", elapsed_gpu);
+	printf("Hashrate: %.2f H/s\n", num_hashes/(elapsed_gpu*1e-3));
 
 	return 0;
 }
