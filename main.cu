@@ -22,7 +22,7 @@ extern "C" {
 	GDIMX = sqrt(2^32/BDIMX)
 */
 #ifndef VERIFY_HASH
-#define BDIMX		512			//MAX = 512
+#define BDIMX		64			//MAX = 512
 #define GDIMX		65535//8192		//MAX = 65535 = 2^16-1
 #define GDIMY		1
 #endif
@@ -77,8 +77,10 @@ int main(int argc, char **argv) {
 	
 	//Initialize Cuda stuff
 	cudaPrintfInit();
-	dim3 DimBlock(BDIMX,1);
 	dim3 DimGrid(GDIMX,GDIMY);
+	#ifndef ITERATE_BLOCKS
+	dim3 DimBlock(BDIMX,1);
+	#endif
 
 	//Used to store a nonce if a block is mined
 	Nonce_result h_nr;
@@ -88,7 +90,17 @@ int main(int argc, char **argv) {
 	SHA256_CTX ctx;
 	sha256_init(&ctx);
 	sha256_update(&ctx, (unsigned char *) data, 80);	//ctx.state contains a-h
-	sha256_pad(&ctx);	
+	sha256_pad(&ctx);
+	//Rearrange endianess of data to optimize device reads
+	unsigned int *le_data = (unsigned int *)ctx.data;
+	unsigned int le;
+	for(i=0, j=0; i<16; i++, j+=4) {
+		//Get the data out as big endian
+		//Store it as little endian via x86
+		//On the device side cast the pointer as int* and dereference it correctly
+		le = (ctx.data[j] << 24) | (ctx.data[j + 1] << 16) | (ctx.data[j + 2] << 8) | (ctx.data[j + 3]);
+		le_data[i] = le;
+	}
 
 	//Decodes and stores the difficulty in a 32-byte array for convenience
 	unsigned int nBits = ENDIAN_SWAP_32(*((unsigned int *) (data + 72)));
@@ -123,15 +135,15 @@ int main(int argc, char **argv) {
 	CUDA_SAFE_CALL(cudaMemcpy(d_ctx, (void *) &ctx, sizeof(SHA256_CTX), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(d_nr, (void *) &h_nr, sizeof(Nonce_result), cudaMemcpyHostToDevice));
 
+	float elapsed_gpu;
+	double num_hashes;
 	#ifdef ITERATE_BLOCKS
 	//Try different block sizes
-	double num_hashes;
 	for(i=1; i <= 512; i++) {
 		dim3 DimBlock(i,1);
 	#endif
 		//Start timers
 		cudaEvent_t start, stop;
-		float elapsed_gpu;
 		cudaEventCreate(&start);
 		cudaEventCreate(&stop);
 		cudaEventRecord(start, 0);
@@ -180,7 +192,7 @@ int main(int argc, char **argv) {
 		printf("Nonce not found :(\n");
 	}
 	
-	double num_hashes = BDIMX*GDIMX*GDIMY;
+	num_hashes = BDIMX*GDIMX*GDIMY;
 	printf("Tested %.0f hashes\n", num_hashes);
 	printf("GPU execustion time: %f ms\n", elapsed_gpu);
 	printf("Hashrate: %.2f H/s\n", num_hashes/(elapsed_gpu*1e-3));
@@ -200,20 +212,19 @@ __constant__ uint32_t k[64] = {
 	0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 
-//Threads are organized mostly linearly but maximum GridDim forces some rows to exist
 #define NONCE_VAL (gridDim.x*blockDim.x*blockIdx.y + blockDim.x*blockIdx.x + threadIdx.x)
 
 __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
-	unsigned int *mm = (unsigned int *) debug;
 	unsigned int m[64];
-	unsigned int hh[8];
+	unsigned int hash[8];
 	unsigned int a,b,c,d,e,f,g,h,t1,t2;
 	int i, j;
 	unsigned int nonce = NONCE_VAL;
 
 	//Compute SHA-256 Message Schedule
-	for (i = 0, j = 0; i < 16; ++i, j += 4)
-		m[i] = (ctx->data[j] << 24) | (ctx->data[j + 1] << 16) | (ctx->data[j + 2] << 8) | (ctx->data[j + 3]);
+	unsigned int *le_data = (unsigned int *) ctx->data;
+	for(i=0; i<16; i++)
+		m[i] = le_data[i];
 	//Replace the nonce
 	m[3] = nonce;
 	for ( ; i < 64; ++i)
@@ -281,22 +292,23 @@ __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
 		a = t1 + t2;
 	}
 
-	hh[0] = ENDIAN_SWAP_32(a + 0x6a09e667);
-	hh[1] = ENDIAN_SWAP_32(b + 0xbb67ae85);
-	hh[2] = ENDIAN_SWAP_32(c + 0x3c6ef372);
-	hh[3] = ENDIAN_SWAP_32(d + 0xa54ff53a);
-	hh[4] = ENDIAN_SWAP_32(e + 0x510e527f);
-	hh[5] = ENDIAN_SWAP_32(f + 0x9b05688c);
-	hh[6] = ENDIAN_SWAP_32(g + 0x1f83d9ab);
-	hh[7] = ENDIAN_SWAP_32(h + 0x5be0cd19);
+	hash[0] = ENDIAN_SWAP_32(a + 0x6a09e667);
+	hash[1] = ENDIAN_SWAP_32(b + 0xbb67ae85);
+	hash[2] = ENDIAN_SWAP_32(c + 0x3c6ef372);
+	hash[3] = ENDIAN_SWAP_32(d + 0xa54ff53a);
+	hash[4] = ENDIAN_SWAP_32(e + 0x510e527f);
+	hash[5] = ENDIAN_SWAP_32(f + 0x9b05688c);
+	hash[6] = ENDIAN_SWAP_32(g + 0x1f83d9ab);
+	hash[7] = ENDIAN_SWAP_32(h + 0x5be0cd19);
 
 	#ifdef VERIFY_HASH
+	unsigned int *ref_hash = (unsigned int *) debug;
 	for(i=0; i<8; i++) {
-		cuPrintf("%.8x, %.8x\n", hh[i], mm[i]);
+		cuPrintf("%.8x, %.8x\n", hash[i], ref_hash[i]);
 	}
 	#endif
 
-	unsigned char *hhh = (unsigned char *) hh;
+	unsigned char *hhh = (unsigned char *) hash;
 	i=0;
 	while(hhh[i] == ctx->difficulty[i])
 		i++;
