@@ -1,3 +1,14 @@
+/*
+ * EC527 Final Project
+ * May 8, 2015
+ * Gerardo Ravago - gerardo@gcr.me
+ *
+ * CUDA Based GPU Bitcoin Miner
+ *
+ * Special Thanks
+ *  Brad Conte - Reference implementation of SHA-256
+ */
+
 #include <cstdio>
 #include <cstdlib>
 #include <stdbool.h>
@@ -24,8 +35,8 @@ extern "C" {
 */
 #ifndef VERIFY_HASH
 #define BDIMX		64			//MAX = 512
-#define GDIMX		65535//8192		//MAX = 65535 = 2^16-1
-#define GDIMY		1
+#define GDIMX		8192		//MAX = 65535 = 2^16-1
+#define GDIMY		GDIMX
 #endif
 
 #ifdef VERIFY_HASH
@@ -47,16 +58,19 @@ inline void gpuAssert(cudaError_t code, char *file, int line, bool abort)
 
 #define CUDA_SAFE_CALL(ans) { gpuAssert((ans), __FILE__, __LINE__, true); }
 
+//Warning: This mmodifies the nonce value of data so do it last!
 void compute_and_print_hash(unsigned char *data, unsigned int nonce) {
 	unsigned char hash[32];
 	SHA256_CTX ctx;
 	int i;
 	
+	*((unsigned long *) (data + 76)) = ENDIAN_SWAP_32(nonce);
+
 	sha256_init(&ctx);
 	sha256_update(&ctx, data, 80);
 	sha256_final(&ctx, hash);
 	sha256_init(&ctx);
-	sha256_update(&ctx, hash, 80);
+	sha256_update(&ctx, hash, 32);
 	sha256_final(&ctx, hash);
 
 	printf("Hash is:\n");
@@ -137,7 +151,7 @@ int main(int argc, char **argv) {
 	CUDA_SAFE_CALL(cudaMemcpy(d_nr, (void *) &h_nr, sizeof(Nonce_result), cudaMemcpyHostToDevice));
 
 	float elapsed_gpu;
-	double num_hashes;
+	long long int num_hashes;
 	#ifdef ITERATE_BLOCKS
 	//Try different block sizes
 	for(i=1; i <= 512; i++) {
@@ -193,9 +207,10 @@ int main(int argc, char **argv) {
 		printf("Nonce not found :(\n");
 	}
 	
-	num_hashes = BDIMX*GDIMX*GDIMY;
-	printf("Tested %.0f hashes\n", num_hashes);
-	printf("GPU execustion time: %f ms\n", elapsed_gpu);
+	num_hashes = BDIMX;
+	num_hashes *= GDIMX*GDIMY;
+	printf("Tested %lld hashes\n", num_hashes);
+	printf("GPU execution time: %f ms\n", elapsed_gpu);
 	printf("Hashrate: %.2f H/s\n", num_hashes/(elapsed_gpu*1e-3));
 
 	return 0;
@@ -300,6 +315,8 @@ __global__ void kernel_sha256d(SHA256_CTX *ctx, Nonce_result *nr, void *debug) {
 		//is written to the output, they're all winners :)
 		//Further it's unlikely to even find a nonce let alone 2
 		nr->nonce_found = true;
+		//The nonce here has the correct endianess,
+		//but it must be stored in the block in little endian order
 		nr->nonce = nonce;
 	}
 }

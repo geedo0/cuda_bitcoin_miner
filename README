@@ -1,0 +1,48 @@
+EC527 Final Project
+Bitcoin Mining with EC527
+Due 5/8/15
+
+Gerardo Ravago
+http://www.gcr.me/
+https://github.com/geedo0/cuda_bitcoin_miner
+
+Description:
+This project implements the Bitcoin mining algorithm optimized for the Nvidia Quadro NVS 295 GPU found in the PHO 207 lab machines. Currently the CUDA portion of the project only works on faked data stored in test.h and is meant to be a proof of concept to experiment with optimizing just the mining portion of Bitcoin. A complete implementation that interfaces with the Bitcoin network will eventually be completed and posted to Github. For now, the code in the future_work directory is provided as is and is the beginnings of that side project. It's based on the libblkmaker library which generates block headers using the getblocktemplate JSON RPC provided by the bitcoind.
+
+Contents:
+/bin/ - Compiled binaries for the 
+/Code/ - All the code for this project.
+	/cuPrintf.cu - CUDA Printf routine
+	/cuPrintf.cuh - CUDA Printf header
+	/main.cu - Miner's main function and Bitcoin mining kernel
+	/makefile - Makefile to build the miners
+	/serial_baseline.c  - CPU based Bitcoin miner
+	/sha256.c - Basic SHA-256 implementation derivative of Brad Conte's work
+	/sha256.h - Header file with supporting data structures
+	/sha256_unrolls.h - Contains unrolled versions of the SHA256 compression function
+	/test.h - Declares an array representing a Bitcoin block header to be mined
+	/utils.c - Defines a few useful functions for this project
+	/utils.h - Header file
+/future_work/ - Code for a future side project to make a complete Bitcoin miner, provided as is.
+/writeup.pdf - Writeup for this project
+/README - This file
+
+Compilation Instructions:
+cd code/
+make all
+
+Usage:
+1. Edit the block header in test.h if desired. The specification for this can be found in the Bitcoin Developer's Reference.
+2. Run ./gpu_miner. To check all 4 billion nonces should take about 90 seconds.
+
+NOTE: Not all block headers will have a solution. Good luck ;)
+
+Sample output:
+
+-bash-4.1$ ./gpu_miner
+Nonce found! 68c664a2
+Hash is:
+00000000 adeac280 8160c906 96bb34f1 00ec1360 b679ec1e 9f453df4 44de3e15
+Tested 4294967296 hashes
+GPU execution time: 91587.929688 ms
+Hashrate: 46894468.63 H/s
